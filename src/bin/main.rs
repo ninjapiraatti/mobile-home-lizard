@@ -31,7 +31,7 @@ use smart_leds::{
     SmartLedsWrite,
 };
 use rotary_encoder_hal::{Direction, Rotary};
-use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+use ssd1306::{command::AddrMode, prelude::*, I2CDisplayInterface, Ssd1306};
 
 struct MenuItem<'a> {
     text: &'a str,
@@ -43,15 +43,17 @@ struct Menu<'a> {
     selected_index: usize,
     scroll_offset: usize,
     max_visible_items: usize,
+    display: Ssd1306
 }
 
 impl<'a> Menu<'a> {
-    fn new(items: &'a [MenuItem<'a>], max_visible_items: usize) -> Self {
+    fn new(items: &'a [MenuItem<'a>], max_visible_items: usize, display: Ssd1306) -> Self {
         Menu {
             items,
             selected_index: 0,
             scroll_offset: 0,
             max_visible_items,
+            display,
         }
     }
 
@@ -87,12 +89,6 @@ impl<'a> Menu<'a> {
         .text_color(BinaryColor::On)
         .build();
 
-        let interface = I2CDisplayInterface::new(i2c);
-        let mut display = Ssd1306::new(
-            interface,
-            DisplaySize128x32,
-            DisplayRotation::Rotate0,
-        ).into_buffered_graphics_mode();
         if let Err(e) = display.clear(BinaryColor::Off) {
             println!("Failed to clear display");
         }
@@ -212,6 +208,12 @@ fn main() -> ! {
     .unwrap()
     .with_sda(peripherals.GPIO19)
     .with_scl(peripherals.GPIO18);
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(
+        interface,
+        DisplaySize128x32,
+        DisplayRotation::Rotate0,
+    ).into_buffered_graphics_mode();
     println!("Did half of OLED stuff");
     println!("Starting I2C scan...");
     for addr in 0..=127 {
@@ -248,7 +250,7 @@ fn main() -> ! {
         MenuItem { text: "Item 6", value: Some(6) },
         MenuItem { text: "Item 7", value: Some(7) },
     ];
-    let mut menu = Menu::new(&menu_items, 4);
+    let mut menu = Menu::new(&menu_items, 3, display);
 
     loop {
         color.hue = pos as u8;
