@@ -11,7 +11,7 @@ use embedded_graphics::{
 };
 use core::cell::RefCell;
 use critical_section::Mutex;
-use esp_hal::clock::CpuClock;
+use esp_hal::{clock::CpuClock, Blocking};
 use esp_hal::main;
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
@@ -32,6 +32,130 @@ use smart_leds::{
 };
 use rotary_encoder_hal::{Direction, Rotary};
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+
+// Menu system structures
+struct MenuItem<'a> {
+    text: &'a str,
+    // Add more fields as needed, e.g., action ID or function pointer
+    value: Option<i32>,
+}
+
+struct Menu<'a> {
+    items: &'a [MenuItem<'a>],
+    selected_index: usize,
+    scroll_offset: usize,
+    max_visible_items: usize,
+}
+
+impl<'a> Menu<'a> {
+    fn new(items: &'a [MenuItem<'a>], max_visible_items: usize) -> Self {
+        Menu {
+            items,
+            selected_index: 0,
+            scroll_offset: 0,
+            max_visible_items,
+        }
+    }
+
+    fn navigate(&mut self, direction: Direction) {
+        match direction {
+            Direction::Clockwise => {
+                if self.selected_index < self.items.len() - 1 {
+                    self.selected_index += 1;
+                    
+                    // Adjust scroll offset if needed
+                    if self.selected_index >= self.scroll_offset + self.max_visible_items {
+                        self.scroll_offset += 1;
+                    }
+                }
+            },
+            Direction::CounterClockwise => {
+                if self.selected_index > 0 {
+                    self.selected_index -= 1;
+                    
+                    // Adjust scroll offset if needed
+                    if self.selected_index < self.scroll_offset {
+                        self.scroll_offset -= 1;
+                    }
+                }
+            },
+            Direction::None => {},
+        }
+    }
+    
+    fn get_selected_item(&self) -> Option<&MenuItem<'a>> {
+        self.items.get(self.selected_index)
+    }
+    
+    fn render(&self, i2c: &mut I2c<Blocking>) {
+        let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
+
+        let interface = I2CDisplayInterface::new(i2c);
+        let mut display = Ssd1306::new(
+            interface,
+            DisplaySize128x32,
+            DisplayRotation::Rotate0,
+        ).into_buffered_graphics_mode();
+        if let Err(e) = display.clear(BinaryColor::Off) {
+            println!("Failed to clear display");
+        }
+        
+        let visible_items = self.items.iter()
+            .skip(self.scroll_offset)
+            .take(self.max_visible_items);
+            
+        for (i, item) in visible_items.enumerate() {
+            let y_position = (i as i32) * 10 + 2; // 10 pixels per row, 2 pixel padding
+            let is_selected = self.scroll_offset + i == self.selected_index;
+            
+            // Draw selection indicator
+            if is_selected {
+                Text::with_baseline(">", Point::new(0, y_position), text_style, Baseline::Top)
+                .draw(&mut display)
+                .unwrap();
+            }
+            
+            // Draw menu item text
+            Text::with_baseline(
+                item.text, 
+                Point::new(8, y_position), 
+                text_style, 
+                Baseline::Top
+            )
+            .draw(&mut display)
+            .unwrap();
+            
+            // Draw value if present
+            if let Some(value) = item.value {
+                let value_text = alloc::format!("{}", value);
+                Text::with_baseline(
+                    &value_text, 
+                    Point::new(90, y_position), 
+                    text_style, 
+                    Baseline::Top
+                )
+                .draw(&mut display)
+                .unwrap();
+            }
+        }
+        
+        // Optional: Draw scroll indicators if needed
+        if self.scroll_offset > 0 {
+            Text::with_baseline("^", Point::new(120, 0), text_style, Baseline::Top)
+                .draw(&mut display)
+                .unwrap();
+        }
+        if self.scroll_offset + self.max_visible_items < self.items.len() {
+            Text::with_baseline("v", Point::new(120, 24), text_style, Baseline::Top)
+                .draw(&mut display)
+                .unwrap();
+        }
+        display.flush().unwrap();
+    }
+}
 
 static BUTTON: Mutex<RefCell<Option<Input>>> = Mutex::new(RefCell::new(None));
 // Flag to indicate a button press event occurred in the interrupt
@@ -108,24 +232,6 @@ fn main() -> ! {
             println!("No device found");
         }
     }
-    let interface = I2CDisplayInterface::new(i2c);
-    let mut display = Ssd1306::new(
-        interface,
-        DisplaySize128x32,
-        DisplayRotation::Rotate0,
-    ).into_buffered_graphics_mode();
-    //display.reset(&mut reset, &mut delay).unwrap();
-    display.init().unwrap();
-    let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_6X10)
-        .text_color(BinaryColor::On)
-        .build();
-
-    Text::with_baseline("Mobile home lizard", Point::new(0, 4), text_style, Baseline::Top)
-        .draw(&mut display)
-        .unwrap();
-
-    display.flush().unwrap();
     println!("Did OLED display stuff");
 
     // From the template
@@ -141,6 +247,15 @@ fn main() -> ! {
     println!("Did stuff from the template");
 
     let mut pos: isize = 0;
+
+    // Menu system initialization
+    let menu_items = [
+        MenuItem { text: "Item 1", value: Some(1) },
+        MenuItem { text: "Item 2", value: Some(2) },
+        MenuItem { text: "Item 3", value: Some(3) },
+        MenuItem { text: "Item 4", value: Some(4) },
+    ];
+    let mut menu = Menu::new(&menu_items, 4);
 
     loop {
         color.hue = pos as u8;
@@ -160,27 +275,8 @@ fn main() -> ! {
         if button_was_pressed {
             println!("Button pressed");
         }
-
-        //println!("Pos: {:?}", pos);
-        //println!("Button state: {:?}", button.is_interrupt_set());
-        match encoder.update().unwrap() {
-            Direction::Clockwise => {
-                pos += 1;
-                println!("Pos: {:?}", pos);
-                display.clear(BinaryColor::Off).unwrap();
-                Text::with_baseline("Mobile home lizard", Point::new(pos as i32, 4), text_style, Baseline::Top)
-                .draw(&mut display)
-                .unwrap();
-                display.flush().unwrap();
-            }
-            Direction::CounterClockwise => {
-                pos -= 1;
-                println!("Pos: {:?}", pos);
-            }
-            Direction::None => {}
-        }
-        // Show something in the OLED
-        
+        menu.navigate(encoder.update().unwrap());
+        menu.render(&mut i2c);
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
