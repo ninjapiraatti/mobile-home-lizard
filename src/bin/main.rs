@@ -152,7 +152,6 @@ fn main() -> ! {
             let was_pressed = *BUTTON_PRESSED.borrow_ref(cs);
             if was_pressed {
                 // Reset the flag after we've detected it
-                println!("Button was pressed");
                 *BUTTON_PRESSED.borrow_ref_mut(cs) = false;
             }
             was_pressed
@@ -168,6 +167,7 @@ fn main() -> ! {
             Direction::Clockwise => {
                 pos += 1;
                 println!("Pos: {:?}", pos);
+                display.clear(BinaryColor::Off).unwrap();
                 Text::with_baseline("Mobile home lizard", Point::new(pos as i32, 4), text_style, Baseline::Top)
                 .draw(&mut display)
                 .unwrap();
@@ -203,10 +203,8 @@ fn interrupt_handler() {
                 .unwrap()
                 .is_low()
         });
-        
-        println!("Button pin is low: {}", is_button_low);
 
-        if is_button_low == false {
+        if is_button_low == true {
             critical_section::with(|cs| {
                 *BUTTON_PRESSED.borrow_ref_mut(cs) = true;
             });
