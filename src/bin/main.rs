@@ -143,6 +143,7 @@ impl<'a> Menu<'a> {
                 .draw(&mut display)
                 .unwrap();
         }
+        Delay::new().delay_millis(20);
         display.flush().unwrap();
     }
 }
@@ -204,7 +205,6 @@ fn main() -> ! {
 
 
     // OLED stuff
-    let mut reset = Output::new(peripherals.GPIO13, Level::Low, OutputConfig::default());
     let mut i2c = I2c::new(
         peripherals.I2C0,
         Config::default().with_frequency(Rate::from_khz(400)),
@@ -246,6 +246,7 @@ fn main() -> ! {
         MenuItem { text: "Item 4", value: Some(4) },
         MenuItem { text: "Item 5", value: Some(5) },
         MenuItem { text: "Item 6", value: Some(6) },
+        MenuItem { text: "Item 7", value: Some(7) },
     ];
     let mut menu = Menu::new(&menu_items, 4);
 
