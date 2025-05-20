@@ -33,10 +33,8 @@ use smart_leds::{
 use rotary_encoder_hal::{Direction, Rotary};
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 
-// Menu system structures
 struct MenuItem<'a> {
     text: &'a str,
-    // Add more fields as needed, e.g., action ID or function pointer
     value: Option<i32>,
 }
 
@@ -62,8 +60,6 @@ impl<'a> Menu<'a> {
             Direction::Clockwise => {
                 if self.selected_index < self.items.len() - 1 {
                     self.selected_index += 1;
-                    
-                    // Adjust scroll offset if needed
                     if self.selected_index >= self.scroll_offset + self.max_visible_items {
                         self.scroll_offset += 1;
                     }
@@ -72,8 +68,6 @@ impl<'a> Menu<'a> {
             Direction::CounterClockwise => {
                 if self.selected_index > 0 {
                     self.selected_index -= 1;
-                    
-                    // Adjust scroll offset if needed
                     if self.selected_index < self.scroll_offset {
                         self.scroll_offset -= 1;
                     }
@@ -110,15 +104,13 @@ impl<'a> Menu<'a> {
         for (i, item) in visible_items.enumerate() {
             let y_position = (i as i32) * 10 + 2; // 10 pixels per row, 2 pixel padding
             let is_selected = self.scroll_offset + i == self.selected_index;
-            
-            // Draw selection indicator
+
             if is_selected {
                 Text::with_baseline(">", Point::new(0, y_position), text_style, Baseline::Top)
                 .draw(&mut display)
                 .unwrap();
             }
-            
-            // Draw menu item text
+
             Text::with_baseline(
                 item.text, 
                 Point::new(8, y_position), 
@@ -127,8 +119,7 @@ impl<'a> Menu<'a> {
             )
             .draw(&mut display)
             .unwrap();
-            
-            // Draw value if present
+
             if let Some(value) = item.value {
                 let value_text = alloc::format!("{}", value);
                 Text::with_baseline(
@@ -141,8 +132,7 @@ impl<'a> Menu<'a> {
                 .unwrap();
             }
         }
-        
-        // Optional: Draw scroll indicators if needed
+
         if self.scroll_offset > 0 {
             Text::with_baseline("^", Point::new(120, 0), text_style, Baseline::Top)
                 .draw(&mut display)
@@ -254,6 +244,8 @@ fn main() -> ! {
         MenuItem { text: "Item 2", value: Some(2) },
         MenuItem { text: "Item 3", value: Some(3) },
         MenuItem { text: "Item 4", value: Some(4) },
+        MenuItem { text: "Item 5", value: Some(5) },
+        MenuItem { text: "Item 6", value: Some(6) },
     ];
     let mut menu = Menu::new(&menu_items, 4);
 
