@@ -9,7 +9,7 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
-use core::cell::RefCell;
+use core::{cell::RefCell, ops::Add};
 use critical_section::Mutex;
 use esp_hal::{clock::CpuClock, Blocking};
 use esp_hal::main;
@@ -31,23 +31,28 @@ use smart_leds::{
     SmartLedsWrite,
 };
 use rotary_encoder_hal::{Direction, Rotary};
-use ssd1306::{command::AddrMode, prelude::*, I2CDisplayInterface, Ssd1306};
+use ssd1306::{command::AddrMode, prelude::*, I2CDisplayInterface, Ssd1306, mode::BufferedGraphicsMode};
 
 struct MenuItem<'a> {
     text: &'a str,
     value: Option<i32>,
 }
 
-struct Menu<'a> {
+struct Menu<'a, DI, SIZE>
+where DI: WriteOnlyDataCommand,
+      SIZE: DisplaySize,
+{
     items: &'a [MenuItem<'a>],
     selected_index: usize,
     scroll_offset: usize,
     max_visible_items: usize,
-    display: Ssd1306
+    display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>
 }
 
-impl<'a> Menu<'a> {
-    fn new(items: &'a [MenuItem<'a>], max_visible_items: usize, display: Ssd1306) -> Self {
+impl<'a, DI, SIZE> Menu<'a, DI, SIZE>
+where DI: WriteOnlyDataCommand,
+      SIZE: DisplaySize,{
+    fn new(items: &'a [MenuItem<'a>], max_visible_items: usize, display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>) -> Self {
         Menu {
             items,
             selected_index: 0,
@@ -66,6 +71,7 @@ impl<'a> Menu<'a> {
                         self.scroll_offset += 1;
                     }
                 }
+                println!("Clockwise");
             },
             Direction::CounterClockwise => {
                 if self.selected_index > 0 {
@@ -74,6 +80,7 @@ impl<'a> Menu<'a> {
                         self.scroll_offset -= 1;
                     }
                 }
+                println!("CounterClockwise");
             },
             Direction::None => {},
         }
@@ -83,13 +90,13 @@ impl<'a> Menu<'a> {
         self.items.get(self.selected_index)
     }
     
-    fn render(&self, i2c: &mut I2c<Blocking>) {
+    fn render(&mut self) {
         let text_style = MonoTextStyleBuilder::new()
         .font(&FONT_6X10)
         .text_color(BinaryColor::On)
         .build();
 
-        if let Err(e) = display.clear(BinaryColor::Off) {
+        if let Err(e) = &mut self.display.clear(BinaryColor::Off) {
             println!("Failed to clear display");
         }
         
@@ -103,7 +110,7 @@ impl<'a> Menu<'a> {
 
             if is_selected {
                 Text::with_baseline(">", Point::new(0, y_position), text_style, Baseline::Top)
-                .draw(&mut display)
+                .draw(&mut self.display)
                 .unwrap();
             }
 
@@ -113,7 +120,7 @@ impl<'a> Menu<'a> {
                 text_style, 
                 Baseline::Top
             )
-            .draw(&mut display)
+            .draw(&mut self.display)
             .unwrap();
 
             if let Some(value) = item.value {
@@ -124,23 +131,23 @@ impl<'a> Menu<'a> {
                     text_style, 
                     Baseline::Top
                 )
-                .draw(&mut display)
+                .draw(&mut self.display)
                 .unwrap();
             }
         }
 
         if self.scroll_offset > 0 {
             Text::with_baseline("^", Point::new(120, 0), text_style, Baseline::Top)
-                .draw(&mut display)
+                .draw(&mut self.display)
                 .unwrap();
         }
         if self.scroll_offset + self.max_visible_items < self.items.len() {
             Text::with_baseline("v", Point::new(120, 24), text_style, Baseline::Top)
-                .draw(&mut display)
+                .draw(&mut self.display)
                 .unwrap();
         }
         Delay::new().delay_millis(20);
-        display.flush().unwrap();
+        self.display.flush().unwrap();
     }
 }
 
@@ -215,6 +222,7 @@ fn main() -> ! {
         DisplayRotation::Rotate0,
     ).into_buffered_graphics_mode();
     println!("Did half of OLED stuff");
+    /*
     println!("Starting I2C scan...");
     for addr in 0..=127 {
         let result = i2c.write(addr, &[0]);
@@ -224,6 +232,7 @@ fn main() -> ! {
             println!("No device found");
         }
     }
+    */
     println!("Did OLED display stuff");
 
     // From the template
@@ -271,7 +280,7 @@ fn main() -> ! {
             println!("Button pressed");
         }
         menu.navigate(encoder.update().unwrap());
-        menu.render(&mut i2c);
+        menu.render();
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
