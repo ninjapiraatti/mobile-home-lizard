@@ -1,33 +1,37 @@
 {
     "version": 1,
+    "author": "Tuomas Louekari",
     "editor": "wokwi",
     "parts": [
-        {
-            "type": "board-esp32-c6-devkitc-1",
-            "id": "esp",
-            "top": 0.59,
-            "left": 0.67,
-            "attrs": {
-                "flashSize": "16"
-            }
-        }
+      {
+        "type": "board-esp32-c6-devkitc-1",
+        "id": "esp",
+        "top": -61.91,
+        "left": 148.12,
+        "attrs": { "builder": "rust-nostd-esp" }
+      },
+      {
+        "type": "board-ssd1306",
+        "id": "oled1",
+        "top": 204.74,
+        "left": 0.23,
+        "attrs": { "i2cAddress": "0x3c" }
+      },
+      { "type": "wokwi-ky-040", "id": "encoder1", "top": -55.9, "left": -135.2, "attrs": {} }
     ],
     "connections": [
-        [
-            "esp:TX",
-            "$serialMonitor:RX",
-            "",
-            []
-        ],
-        [
-            "esp:RX",
-            "$serialMonitor:TX",
-            "",
-            []
-        ]
+      [ "esp:TX", "$serialMonitor:RX", "", [] ],
+      [ "esp:RX", "$serialMonitor:TX", "", [] ],
+      [ "esp:5V", "oled1:VCC", "red", [ "h0" ] ],
+      [ "esp:GND.1", "oled1:GND", "black", [ "h0" ] ],
+      [ "esp:GND.4", "encoder1:GND", "black", [ "v-28.8", "h-231.5", "v47.2" ] ],
+      [ "esp:3V3", "encoder1:VCC", "red", [ "h-86.4", "v9.2" ] ],
+      [ "esp:22", "encoder1:CLK", "magenta", [ "h8.5", "v-105.6", "h-268.8" ] ],
+      [ "esp:21", "encoder1:DT", "blue", [ "h18.1", "v-105.6", "h-266.6", "v38.3" ] ],
+      [ "esp:19", "oled1:SDA", "limegreen", [ "h18.1", "v134.4", "h-192.07" ] ],
+      [ "esp:18", "oled1:SCL", "gold", [ "h8.5", "v115.2", "h-192.3" ] ],
+      [ "esp:20", "encoder1:SW", "orange", [ "h27.7", "v-105.6", "h-266.6", "v38.3" ] ]
     ],
-    "serialMonitor": {
-        "display": "terminal",
-        "convertEol": true
-    }
-}
+    "serialMonitor": { "display": "terminal", "convertEol": true },
+    "dependencies": {}
+  }
