@@ -21,7 +21,7 @@ use esp_hal::{
     i2c::master::{Config, I2c},
     ram,
     rmt::Rmt,
-    time::Rate,
+    time::{Instant, Rate},
 };
 use esp_hal_smartled::{smart_led_buffer, SmartLedsAdapter};
 use esp_println::println;
@@ -31,7 +31,8 @@ use smart_leds::{
     hsv::{hsv2rgb, Hsv},
     SmartLedsWrite,
 };
-use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+use ssd1306::{prelude::*, mode::DisplayConfig, I2CDisplayInterface, Ssd1306};
+use display_interface::WriteOnlyDataCommand;
 
 struct MenuItem<'a> {
     text: &'a str,
@@ -81,16 +82,16 @@ impl<'a> Menu<'a> {
         self.items.get(self.selected_index)
     }
 
-    fn render(&self, i2c: &mut I2c<Blocking>) {
+    fn render<DI>(&self, display: &mut Ssd1306<DI, DisplaySize128x32, ssd1306::mode::BufferedGraphicsMode<DisplaySize128x32>>)
+    where
+        DI: WriteOnlyDataCommand,
+    {
         let text_style = MonoTextStyleBuilder::new()
             .font(&FONT_6X10)
             .text_color(BinaryColor::On)
             .build();
 
-        let interface = I2CDisplayInterface::new(i2c);
-        let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0)
-            .into_buffered_graphics_mode();
-        if let Err(e) = display.clear(BinaryColor::Off) {
+        if let Err(_e) = display.clear(BinaryColor::Off) {
             println!("Failed to clear display");
         }
 
@@ -100,46 +101,48 @@ impl<'a> Menu<'a> {
             .skip(self.scroll_offset)
             .take(self.max_visible_items);
 
+        const PADDING: i32 = 6; // One letter width (FONT_6X10)
+
         for (i, item) in visible_items.enumerate() {
             let y_position = (i as i32) * 10 + 2; // 10 pixels per row, 2 pixel padding
             let is_selected = self.scroll_offset + i == self.selected_index;
 
             if is_selected {
-                Text::with_baseline(">", Point::new(0, y_position), text_style, Baseline::Top)
-                    .draw(&mut display)
+                Text::with_baseline(">", Point::new(PADDING, y_position), text_style, Baseline::Top)
+                    .draw(display)
                     .unwrap();
             }
 
             Text::with_baseline(
                 item.text,
-                Point::new(8, y_position),
+                Point::new(PADDING + 8, y_position),
                 text_style,
                 Baseline::Top,
             )
-            .draw(&mut display)
+            .draw(display)
             .unwrap();
 
             if let Some(value) = item.value {
                 let value_text = alloc::format!("{}", value);
                 Text::with_baseline(
                     &value_text,
-                    Point::new(90, y_position),
+                    Point::new(96, y_position),
                     text_style,
                     Baseline::Top,
                 )
-                .draw(&mut display)
+                .draw(display)
                 .unwrap();
             }
         }
 
         if self.scroll_offset > 0 {
-            Text::with_baseline("^", Point::new(120, 0), text_style, Baseline::Top)
-                .draw(&mut display)
+            Text::with_baseline("^", Point::new(122 - PADDING, 0), text_style, Baseline::Top)
+                .draw(display)
                 .unwrap();
         }
         if self.scroll_offset + self.max_visible_items < self.items.len() {
-            Text::with_baseline("v", Point::new(120, 24), text_style, Baseline::Top)
-                .draw(&mut display)
+            Text::with_baseline("v", Point::new(122 - PADDING, 24), text_style, Baseline::Top)
+                .draw(display)
                 .unwrap();
         }
         Delay::new().delay_millis(20);
@@ -147,9 +150,27 @@ impl<'a> Menu<'a> {
     }
 }
 
+fn blink_leds(led1: &mut Output, led2: &mut Output) {
+    let delay = Delay::new();
+    for _ in 0..4 {
+        led1.set_high();
+        led2.set_low();
+        delay.delay_millis(150);
+        led1.set_low();
+        led2.set_high();
+        delay.delay_millis(150);
+    }
+    led1.set_low();
+    led2.set_low();
+}
+
+// Rotary encoder button (GPIO20)
 static BUTTON: Mutex<RefCell<Option<Input>>> = Mutex::new(RefCell::new(None));
-// Flag to indicate a button press event occurred in the interrupt
 static BUTTON_PRESSED: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
+
+// Separate button for LED control (GPIO9)
+static LED_BUTTON: Mutex<RefCell<Option<Input>>> = Mutex::new(RefCell::new(None));
+static LED_BUTTON_PRESSED: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -170,26 +191,36 @@ fn main() -> ! {
     let mut io = Io::new(peripherals.IO_MUX);
 
     // Interrupt stuff
-    let config = InputConfig::default().with_pull(Pull::Up);
-    let switch = peripherals.GPIO20;
+    let input_config = InputConfig::default().with_pull(Pull::Up);
     io.set_interrupt_handler(interrupt_handler);
-    let mut button = Input::new(switch, config);
+
+    // Rotary encoder button (GPIO20)
+    let mut button = Input::new(peripherals.GPIO20, input_config);
     critical_section::with(|cs| {
         button.listen(Event::LowLevel);
         BUTTON.borrow_ref_mut(cs).replace(button)
     });
+
+    // LED control button (GPIO9)
+    let mut led_button = Input::new(peripherals.GPIO9, input_config);
+    critical_section::with(|cs| {
+        led_button.listen(Event::LowLevel);
+        LED_BUTTON.borrow_ref_mut(cs).replace(led_button)
+    });
     println!("Did interrupt stuff");
 
     // Rotary encoder
-    let clk = Input::new(peripherals.GPIO22, config);
-    let dt = Input::new(peripherals.GPIO21, config);
+    let clk = Input::new(peripherals.GPIO22, input_config);
+    let dt = Input::new(peripherals.GPIO21, input_config);
     let mut encoder = Rotary::new(clk, dt);
     println!("Did rotary encoder stuff");
 
-    //let mut test_pin = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
-    //let mut led_pin_a = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
+    // Two LEDs for button-triggered blinking
+    let mut led1 = Output::new(peripherals.GPIO4, Level::Low, OutputConfig::default());
+    let mut led2 = Output::new(peripherals.GPIO5, Level::Low, OutputConfig::default());
+    println!("Did LED setup");
 
-    // LED stuff
+    // RGB LED stuff
     let led_pin = peripherals.GPIO8;
     let led_freq = Rate::from_mhz(80);
     let rmt = Rmt::new(peripherals.RMT, led_freq).unwrap();
@@ -221,6 +252,12 @@ fn main() -> ! {
             println!("No device found");
         }
     }
+
+    // Initialize the OLED display once
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0)
+        .into_buffered_graphics_mode();
+    display.init().unwrap();
     println!("Did OLED display stuff");
 
     // From the template
@@ -265,6 +302,10 @@ fn main() -> ! {
     ];
     let mut menu = Menu::new(&menu_items, 4);
 
+    // Debounce tracking for rotary encoder
+    let mut last_encoder_time = Instant::now();
+    const ENCODER_DEBOUNCE_MS: u64 = 80;
+
     loop {
         println!("Loop");
         color.hue = pos as u8;
@@ -272,21 +313,48 @@ fn main() -> ! {
         led.write(brightness(gamma(data.iter().cloned()), 10))
             .unwrap();
 
-        // Check if the button was pressed in the interrupt handler
-        let button_was_pressed = critical_section::with(|cs| {
+        // Check rotary encoder button
+        let rotary_button_pressed = critical_section::with(|cs| {
             let was_pressed = *BUTTON_PRESSED.borrow_ref(cs);
             if was_pressed {
-                // Reset the flag after we've detected it
                 *BUTTON_PRESSED.borrow_ref_mut(cs) = false;
             }
             was_pressed
         });
 
-        if button_was_pressed {
-            println!("Button pressed");
+        if rotary_button_pressed {
+            println!("Rotary button pressed");
         }
-        menu.navigate(encoder.update().unwrap());
-        menu.render(&mut i2c);
+
+        // Check LED control button (GPIO9)
+        let led_button_pressed = critical_section::with(|cs| {
+            let was_pressed = *LED_BUTTON_PRESSED.borrow_ref(cs);
+            if was_pressed {
+                *LED_BUTTON_PRESSED.borrow_ref_mut(cs) = false;
+            }
+            was_pressed
+        });
+
+        if led_button_pressed {
+            println!("LED button pressed");
+            blink_leds(&mut led1, &mut led2);
+        }
+
+        // Debounced encoder handling
+        let direction = encoder.update().unwrap();
+        if direction != Direction::None {
+            let now = Instant::now();
+            let elapsed = now.duration_since_epoch().as_millis() - last_encoder_time.duration_since_epoch().as_millis();
+            if elapsed > ENCODER_DEBOUNCE_MS {
+                menu.navigate(direction);
+                last_encoder_time = now;
+            }
+        }
+
+        menu.render(&mut display);
+
+        // Update hue for RGB LED color cycling
+        pos = pos.wrapping_add(1);
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
@@ -295,30 +363,27 @@ fn main() -> ! {
 #[handler]
 #[ram]
 fn interrupt_handler() {
-    if critical_section::with(|cs| {
-        BUTTON
-            .borrow_ref_mut(cs)
-            .as_mut()
-            .unwrap()
-            .is_interrupt_set()
-    }) {
-        let is_button_low =
-            critical_section::with(|cs| BUTTON.borrow_ref_mut(cs).as_mut().unwrap().is_low());
-
-        if is_button_low == true {
-            critical_section::with(|cs| {
-                *BUTTON_PRESSED.borrow_ref_mut(cs) = true;
-            });
-        }
-    } else {
-        println!("Button NOT pressed");
-    }
-
+    // Check rotary encoder button (GPIO20)
     critical_section::with(|cs| {
-        BUTTON
-            .borrow_ref_mut(cs)
-            .as_mut()
-            .unwrap()
-            .clear_interrupt()
+        if let Some(button) = BUTTON.borrow_ref_mut(cs).as_mut() {
+            if button.is_interrupt_set() {
+                if button.is_low() {
+                    *BUTTON_PRESSED.borrow_ref_mut(cs) = true;
+                }
+                button.clear_interrupt();
+            }
+        }
+    });
+
+    // Check LED control button (GPIO9)
+    critical_section::with(|cs| {
+        if let Some(button) = LED_BUTTON.borrow_ref_mut(cs).as_mut() {
+            if button.is_interrupt_set() {
+                if button.is_low() {
+                    *LED_BUTTON_PRESSED.borrow_ref_mut(cs) = true;
+                }
+                button.clear_interrupt();
+            }
+        }
     });
 }
