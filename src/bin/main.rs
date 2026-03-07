@@ -31,7 +31,8 @@ use smart_leds::{
     hsv::{hsv2rgb, Hsv},
     SmartLedsWrite,
 };
-use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+use ssd1306::{prelude::*, mode::DisplayConfig, I2CDisplayInterface, Ssd1306};
+use display_interface::WriteOnlyDataCommand;
 
 struct MenuItem<'a> {
     text: &'a str,
@@ -81,16 +82,16 @@ impl<'a> Menu<'a> {
         self.items.get(self.selected_index)
     }
 
-    fn render(&self, i2c: &mut I2c<Blocking>) {
+    fn render<DI>(&self, display: &mut Ssd1306<DI, DisplaySize128x32, ssd1306::mode::BufferedGraphicsMode<DisplaySize128x32>>)
+    where
+        DI: WriteOnlyDataCommand,
+    {
         let text_style = MonoTextStyleBuilder::new()
             .font(&FONT_6X10)
             .text_color(BinaryColor::On)
             .build();
 
-        let interface = I2CDisplayInterface::new(i2c);
-        let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0)
-            .into_buffered_graphics_mode();
-        if let Err(e) = display.clear(BinaryColor::Off) {
+        if let Err(_e) = display.clear(BinaryColor::Off) {
             println!("Failed to clear display");
         }
 
@@ -106,7 +107,7 @@ impl<'a> Menu<'a> {
 
             if is_selected {
                 Text::with_baseline(">", Point::new(0, y_position), text_style, Baseline::Top)
-                    .draw(&mut display)
+                    .draw(display)
                     .unwrap();
             }
 
@@ -116,7 +117,7 @@ impl<'a> Menu<'a> {
                 text_style,
                 Baseline::Top,
             )
-            .draw(&mut display)
+            .draw(display)
             .unwrap();
 
             if let Some(value) = item.value {
@@ -127,19 +128,19 @@ impl<'a> Menu<'a> {
                     text_style,
                     Baseline::Top,
                 )
-                .draw(&mut display)
+                .draw(display)
                 .unwrap();
             }
         }
 
         if self.scroll_offset > 0 {
             Text::with_baseline("^", Point::new(120, 0), text_style, Baseline::Top)
-                .draw(&mut display)
+                .draw(display)
                 .unwrap();
         }
         if self.scroll_offset + self.max_visible_items < self.items.len() {
             Text::with_baseline("v", Point::new(120, 24), text_style, Baseline::Top)
-                .draw(&mut display)
+                .draw(display)
                 .unwrap();
         }
         Delay::new().delay_millis(20);
@@ -221,6 +222,12 @@ fn main() -> ! {
             println!("No device found");
         }
     }
+
+    // Initialize the OLED display once
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0)
+        .into_buffered_graphics_mode();
+    display.init().unwrap();
     println!("Did OLED display stuff");
 
     // From the template
@@ -286,7 +293,10 @@ fn main() -> ! {
             println!("Button pressed");
         }
         menu.navigate(encoder.update().unwrap());
-        menu.render(&mut i2c);
+        menu.render(&mut display);
+
+        // Update hue for RGB LED color cycling
+        pos = pos.wrapping_add(1);
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
