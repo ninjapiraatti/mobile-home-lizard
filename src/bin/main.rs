@@ -295,7 +295,7 @@ fn main() -> ! {
             value: Some(7),
         },
     ];
-    let mut menu = Menu::new(&menu_items, 4);
+    let mut menu = Menu::new(&menu_items, 3);
 
     // Debounce tracking
     let mut last_encoder_time = Instant::now();
