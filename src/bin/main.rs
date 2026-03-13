@@ -231,7 +231,16 @@ fn main() -> ! {
     let mut led_center = Output::new(peripherals.GPIO6, Level::Low, OutputConfig::default());
     let mut led_middle_right = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
     let mut led_outer_right = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
-    println!("Did LED setup");
+
+    // Power-on indicator
+    led_pulse(
+        &mut led_center,
+        &mut led_middle_left,
+        &mut led_middle_right,
+        &mut led_outer_left,
+        &mut led_outer_right,
+        100,
+    );
 
     // OLED stuff
     let mut i2c = I2c::new(
