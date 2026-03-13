@@ -303,12 +303,10 @@ fn main() -> ! {
     let mut last_encoder_time = Instant::now();
     let mut last_button_time = Instant::now();
     const ENCODER_DEBOUNCE_MS: u64 = 80;
-    const BUTTON_DEBOUNCE_MS: u64 = 200;
+    const BUTTON_DEBOUNCE_MS: u64 = 50;
     let mut button_was_pressed = false;
 
     loop {
-        println!("Loop");
-
         // Check rotary encoder button (polled with debounce)
         let button_is_low = button.is_low();
         if button_is_low && !button_was_pressed {
