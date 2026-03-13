@@ -195,7 +195,6 @@ fn led_pulse(
     led_outer(led_outer_left, led_outer_right, duration_ms);
 }
 
-
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
@@ -298,11 +297,12 @@ fn main() -> ! {
     let mut menu = Menu::new(&menu_items, 3);
 
     // Debounce tracking
-    let mut last_encoder_time = Instant::now();
     let mut last_button_time = Instant::now();
-    const ENCODER_DEBOUNCE_MS: u64 = 80;
     const BUTTON_DEBOUNCE_MS: u64 = 50;
+    const ENCODER_STEPS_PER_DETENT: i8 = 2; // Adjust if your encoder needs 4
     let mut button_was_pressed = false;
+    let mut needs_render = true;
+    let mut encoder_count: i8 = 0;
 
     loop {
         // Check rotary encoder button (polled with debounce)
@@ -326,21 +326,28 @@ fn main() -> ! {
         }
         button_was_pressed = button_is_low;
 
-        // Debounced encoder handling
+        // Encoder handling - count transitions per detent
         let direction = encoder.update().unwrap();
-        if direction != Direction::None {
-            let now = Instant::now();
-            let elapsed = now.duration_since_epoch().as_millis()
-                - last_encoder_time.duration_since_epoch().as_millis();
-            if elapsed > ENCODER_DEBOUNCE_MS {
-                menu.navigate(direction);
-                last_encoder_time = now;
-            }
+        match direction {
+            Direction::Clockwise => encoder_count += 1,
+            Direction::CounterClockwise => encoder_count -= 1,
+            Direction::None => {}
+        }
+        if encoder_count >= ENCODER_STEPS_PER_DETENT {
+            menu.navigate(Direction::Clockwise);
+            encoder_count = 0;
+            needs_render = true;
+        } else if encoder_count <= -ENCODER_STEPS_PER_DETENT {
+            menu.navigate(Direction::CounterClockwise);
+            encoder_count = 0;
+            needs_render = true;
         }
 
-        menu.render(&mut display);
+        if needs_render {
+            menu.render(&mut display);
+            needs_render = false;
+        }
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
 }
-
