@@ -243,25 +243,14 @@ fn main() -> ! {
     );
 
     // OLED stuff
-    let mut i2c = I2c::new(
+    let i2c = I2c::new(
         peripherals.I2C0,
         Config::default().with_frequency(Rate::from_khz(400)),
     )
     .unwrap()
     .with_sda(peripherals.GPIO19)
     .with_scl(peripherals.GPIO18);
-    println!("Did half of OLED stuff");
-    println!("Starting I2C scan...");
-    for addr in 0..=127 {
-        let result = i2c.write(addr, &[0]);
-        if result.is_ok() {
-            println!("I2C device found at address: 0x{:02X}", addr);
-        } else {
-            println!("No device found");
-        }
-    }
-
-    // Initialize the OLED display once
+    // Initialize the OLED display
     let interface = I2CDisplayInterface::new(i2c);
     let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
