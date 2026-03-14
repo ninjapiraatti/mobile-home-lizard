@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use core::cell::{Cell, RefCell};
 use display_interface::WriteOnlyDataCommand;
 use embedded_graphics::{
     mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
@@ -20,6 +23,8 @@ use esp_hal::{
 use esp_println::println;
 use rotary_encoder_hal::{Direction, Rotary};
 use ssd1306::{mode::DisplayConfig, prelude::*, I2CDisplayInterface, Ssd1306};
+
+use mobile_home_lizard::{config, mqtt, wifi};
 
 struct MenuItem<'a> {
     text: &'a str,
@@ -195,6 +200,29 @@ fn led_pulse(
     led_outer(led_outer_left, led_outer_right, duration_ms);
 }
 
+/// Display a status message on the OLED (up to 3 lines)
+fn show_status<DI>(
+    display: &mut Ssd1306<DI, DisplaySize128x32, ssd1306::mode::BufferedGraphicsMode<DisplaySize128x32>>,
+    lines: &[&str],
+) where
+    DI: WriteOnlyDataCommand,
+{
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
+        .build();
+
+    display.clear(BinaryColor::Off).ok();
+
+    for (i, line) in lines.iter().take(3).enumerate() {
+        let y_position = (i as i32) * 10 + 2;
+        Text::with_baseline(line, Point::new(4, y_position), text_style, Baseline::Top)
+            .draw(display)
+            .unwrap();
+    }
+
+    display.flush().unwrap();
+}
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -202,7 +230,6 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 }
 
 esp_bootloader_esp_idf::esp_app_desc!();
-extern crate alloc;
 
 #[main]
 fn main() -> ! {
@@ -255,92 +282,132 @@ fn main() -> ! {
     let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
     display.init().unwrap();
-    println!("Did OLED display stuff");
+    println!("OLED init complete");
+    show_status(&mut display, &["OLED init OK"]);
+    let display = RefCell::new(display);
 
     // From the template
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let _init = esp_wifi::init(timg0.timer0, esp_hal::rng::Rng::new(peripherals.RNG)).unwrap();
-    println!("Did stuff from the template");
 
-    // Menu system initialization
+    // Menu system initialization - Lights control
     let menu_items = [
         MenuItem {
-            text: "Item 1",
-            value: Some(1),
+            text: "Lights Off",
+            value: None,
         },
         MenuItem {
-            text: "Item 2",
-            value: Some(2),
-        },
-        MenuItem {
-            text: "Item 3",
-            value: Some(3),
-        },
-        MenuItem {
-            text: "Item 4",
-            value: Some(4),
-        },
-        MenuItem {
-            text: "Item 5",
-            value: Some(5),
-        },
-        MenuItem {
-            text: "Item 6",
-            value: Some(6),
-        },
-        MenuItem {
-            text: "Item 7",
-            value: Some(7),
+            text: "Lights On",
+            value: None,
         },
     ];
-    let mut menu = Menu::new(&menu_items, 4);
+    let menu = RefCell::new(Menu::new(&menu_items, 3));
 
-    // Debounce tracking
-    let mut last_encoder_time = Instant::now();
+    // Connect to WiFi
+    println!("Connecting to WiFi...");
+    show_status(&mut *display.borrow_mut(), &["OLED init OK", "Connecting WiFi.."]);
+    let (mut controller, interfaces) = esp_wifi::wifi::new(&_init, peripherals.WIFI).unwrap();
+    let network = wifi::connect(
+        &mut controller,
+        interfaces.sta,
+        config::WIFI_SSID,
+        config::WIFI_PASSWORD,
+    );
+    println!("WiFi connected!");
+    show_status(&mut *display.borrow_mut(), &["OLED init OK", "WiFi OK", "Connecting MQTT.."]);
+
+    // State for the MQTT callbacks
     let mut last_button_time = Instant::now();
-    const ENCODER_DEBOUNCE_MS: u64 = 80;
     const BUTTON_DEBOUNCE_MS: u64 = 50;
+    const ENCODER_STEPS_PER_DETENT: i8 = 2;
     let mut button_was_pressed = false;
+    let mut encoder_count: i8 = 0;
+    let mut pending_command: Option<bool> = None;
+    let mqtt_connected = Cell::new(false);
+    let menu_shown = Cell::new(false);
 
-    loop {
-        // Check rotary encoder button (polled with debounce)
-        let button_is_low = button.is_low();
-        if button_is_low && !button_was_pressed {
-            let now = Instant::now();
-            let elapsed = now.duration_since_epoch().as_millis()
-                - last_button_time.duration_since_epoch().as_millis();
-            if elapsed > BUTTON_DEBOUNCE_MS {
-                println!("Rotary button pressed");
-                led_pulse(
-                    &mut led_center,
-                    &mut led_middle_left,
-                    &mut led_middle_right,
-                    &mut led_outer_left,
-                    &mut led_outer_right,
-                    100,
-                );
-                last_button_time = now;
+    // Enter MQTT loop
+    mqtt::run(
+        network,
+        // on_command: called when HA sends a light command
+        |on| {
+            println!("Received light command from HA: {}", if on { "ON" } else { "OFF" });
+            // Could control actual lights/relays here
+        },
+        // on_connect_change: called when MQTT connection state changes
+        |connected| {
+            println!("MQTT connection: {}", if connected { "connected" } else { "disconnected" });
+            mqtt_connected.set(connected);
+            if connected && !menu_shown.get() {
+                show_status(&mut *display.borrow_mut(), &["OLED init OK", "WiFi OK", "MQTT Connected"]);
+                Delay::new().delay_millis(500);
+                menu.borrow().render(&mut *display.borrow_mut());
+                menu_shown.set(true);
+            } else if !connected {
+                menu_shown.set(false);
+                show_status(&mut *display.borrow_mut(), &["MQTT Disconnected", "Reconnecting.."]);
             }
-        }
-        button_was_pressed = button_is_low;
-
-        // Debounced encoder handling
-        let direction = encoder.update().unwrap();
-        if direction != Direction::None {
-            let now = Instant::now();
-            let elapsed = now.duration_since_epoch().as_millis()
-                - last_encoder_time.duration_since_epoch().as_millis();
-            if elapsed > ENCODER_DEBOUNCE_MS {
-                menu.navigate(direction);
-                last_encoder_time = now;
+        },
+        // poll_button: check encoder and button, return light command if button pressed
+        || {
+            // Only process input if MQTT is connected and menu is shown
+            if !mqtt_connected.get() || !menu_shown.get() {
+                return None;
             }
-        }
 
-        menu.render(&mut display);
-    }
+            // Handle encoder for menu navigation
+            let direction = encoder.update().unwrap();
+            match direction {
+                Direction::Clockwise => encoder_count += 1,
+                Direction::CounterClockwise => encoder_count -= 1,
+                Direction::None => {}
+            }
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
+            let mut needs_render = false;
+            if encoder_count >= ENCODER_STEPS_PER_DETENT {
+                menu.borrow_mut().navigate(Direction::Clockwise);
+                encoder_count = 0;
+                needs_render = true;
+            } else if encoder_count <= -ENCODER_STEPS_PER_DETENT {
+                menu.borrow_mut().navigate(Direction::CounterClockwise);
+                encoder_count = 0;
+                needs_render = true;
+            }
+
+            if needs_render {
+                menu.borrow().render(&mut *display.borrow_mut());
+            }
+
+            // Check button press
+            let button_is_low = button.is_low();
+            if button_is_low && !button_was_pressed {
+                let now = Instant::now();
+                let elapsed = now.duration_since_epoch().as_millis()
+                    - last_button_time.duration_since_epoch().as_millis();
+                if elapsed > BUTTON_DEBOUNCE_MS {
+                    // Button pressed - determine action based on menu selection
+                    let lights_on = menu.borrow().selected_index == 1; // "Lights On" is index 1
+                    println!("Button pressed, sending: {}", if lights_on { "ON" } else { "OFF" });
+
+                    led_pulse(
+                        &mut led_center,
+                        &mut led_middle_left,
+                        &mut led_middle_right,
+                        &mut led_outer_left,
+                        &mut led_outer_right,
+                        100,
+                    );
+
+                    last_button_time = now;
+                    pending_command = Some(lights_on);
+                }
+            }
+            button_was_pressed = button_is_low;
+
+            // Return pending command and clear it
+            pending_command.take()
+        },
+    );
 }
-
