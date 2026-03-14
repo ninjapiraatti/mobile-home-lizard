@@ -53,6 +53,10 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 ] }
 static_cell = "2.1.1"
 heapless = { version = "0.8.0", default-features = false }
+minimq = { version = "0.10", default-features = false, features = ["unsecure"] }
+smoltcp-nal = "0.7"
+embedded-nal = "0.9"
+embedded-time = "0.12"
 esp-hal-smartled = { version = "0.16.0", features = ["esp32c6"] }
 rotary-encoder-hal = "0.6.0"
 embedded-hal = "1.0.0"

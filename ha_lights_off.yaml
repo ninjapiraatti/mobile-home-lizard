@@ -1,0 +1,53 @@
+alias: lights_off
+description: ""
+trigger:
+  - type: carbon_dioxide
+    platform: device
+    device_id: 31ba1b5bd3614abfeacb038175a4549a
+    entity_id: 1e8cc8ffcad56b891c16329e0b75bf42
+    domain: sensor
+    below: 1
+    id: co2
+  - platform: state
+    entity_id:
+      - sensor.deepsleeptest_wakeup_cause
+    from: null
+    to: null
+    id: deepsleep
+  - platform: mqtt
+    topic: mobile-home-lizard/switch/lights/command
+    payload: "OFF"
+    id: mobile_home_lizard
+  - platform: mqtt
+    topic: wooden-box/button/toggle
+    payload: "pressed"
+    id: wooden_box
+condition:
+  - condition: or
+    conditions:
+      # Mobile Home Lizard bypasses the light state check
+      - condition: trigger
+        id: mobile_home_lizard
+      # Other triggers: turn off if ANY light is on
+      - condition: template
+        value_template: >-
+          {% set areas = ['bedroom', 'dining', 'living_room'] %}
+          {% set ns = namespace(any_on=false) %}
+          {% for area in areas %}
+            {% for eid in area_entities(area) %}
+              {% if eid.startswith('light.') and states(eid) == 'on' %}
+                {% set ns.any_on = true %}
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+          {{ ns.any_on }}
+action:
+  - metadata: {}
+    data: {}
+    target:
+      area_id:
+        - bedroom
+        - living_room
+        - dining
+    action: light.turn_off
+mode: single
